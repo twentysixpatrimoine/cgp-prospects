@@ -226,7 +226,7 @@
         <div class="brand-name">Patrimoine Prospects</div>
         <div class="brand-sub">Suivi des dirigeants à fort potentiel</div>
       </div>
-  <span class="save-badge" id="save-badge">☁️ Synchronisé avec Airtable</span>
+  <span class="save-badge" id="save-badge">💾 Sauvegarde auto activée</span>
     </div>
     <div class="nav-tabs">
       <button class="nav-tab active" onclick="showView('list')" id="tab-list">📋 Prospects (<span id="nav-count">0</span>)</button>
@@ -368,39 +368,8 @@
 
 <script>
 // ── DATA ──────────────────────────────────────────────────────────────────────
-// ── AIRTABLE CONFIG ───────────────────────────────────────────────────────────
-const AT_TOKEN = 'patJL0DthtlowVDuo.0bfedd8a79e1dddf7fc14a92a5bae2f6d4b77b78a4527927288af7af10356ef5';
-const AT_BASE  = 'appL3cF8fR47H9SBM';
-const AT_TABLE = 'tbl5cO82cAKQJRIXr';
-const AT_URL   = `https://api.airtable.com/v0/${AT_BASE}/${AT_TABLE}`;
-const AT_HEADS = { 'Authorization': `Bearer ${AT_TOKEN}`, 'Content-Type': 'application/json' };
-
+const STORAGE_KEY = 'cgp_prospects_v1';
 function fmtDate(d) { if(!d) return ''; const [y,m,j]=d.split('-'); return `${j}/${m}/${y}`; }
-
-// Convertit un record Airtable → objet prospect local
-function atToProspect(rec) {
-  const f = rec.fields;
-  return {
-    id: rec.id,
-    dirigeant: f.dirigeant||'', entreprise: f.entreprise||'', secteur: f.secteur||'',
-    ca: f.ca||'', signal: f.signal||'', source: f.source||'',
-    dateDetection: f.dateDetection||'', dateRelance: f.dateRelance||'',
-    statut: f.statut||'À contacter', notes: f.notes||'',
-    email: f.email||'', telephone: f.telephone||'', adresse: f.adresse||'',
-    urlArticle: f.urlArticle||'',
-    interactions: f.interactions ? JSON.parse(f.interactions) : []
-  };
-}
-
-// Convertit un objet prospect local → champs Airtable
-function prospectToAt(p) {
-  const fields = {};
-  ['dirigeant','entreprise','secteur','ca','signal','source','dateDetection','dateRelance','statut','notes','email','telephone','adresse','urlArticle'].forEach(k => {
-    if(p[k] !== undefined && p[k] !== '') fields[k] = p[k];
-  });
-  if(p.interactions && p.interactions.length) fields.interactions = JSON.stringify(p.interactions);
-  return fields;
-}
 
 let prospects = [];
 let currentId = null;
@@ -408,68 +377,15 @@ let editMode = false;
 let currentTab = 'infos';
 let generatedEmail = null;
 
-async function load() {
-  showLoadingOverlay(true);
+function load() {
   try {
-    let allRecords = [], offset = null;
-    do {
-      const url = AT_URL + '?pageSize=100' + (offset ? `&offset=${offset}` : '');
-      const res = await fetch(url, { headers: AT_HEADS });
-      const data = await res.json();
-      if(data.error) throw new Error(data.error.message);
-      allRecords = allRecords.concat(data.records||[]);
-      offset = data.offset;
-    } while(offset);
-    prospects = allRecords.map(atToProspect);
-  } catch(e) {
-    showToast('❌ Erreur de connexion Airtable');
-    console.error(e);
-    prospects = [];
-  }
-  showLoadingOverlay(false);
-  renderStats(); renderAlerts(); renderTable();
+    const saved = localStorage.getItem(STORAGE_KEY);
+    prospects = saved ? JSON.parse(saved) : [];
+  } catch { prospects = []; }
 }
-
-async function save(p) {
-  // p = prospect à sauvegarder (avec son id Airtable)
-  try {
-    const isNew = !p.id || typeof p.id === 'number';
-    if(isNew) {
-      const res = await fetch(AT_URL, { method:'POST', headers: AT_HEADS, body: JSON.stringify({ fields: prospectToAt(p) }) });
-      const data = await res.json();
-      if(data.error) throw new Error(data.error.message);
-      return atToProspect(data);
-    } else {
-      const res = await fetch(`${AT_URL}/${p.id}`, { method:'PATCH', headers: AT_HEADS, body: JSON.stringify({ fields: prospectToAt(p) }) });
-      const data = await res.json();
-      if(data.error) throw new Error(data.error.message);
-      return atToProspect(data);
-    }
-  } catch(e) {
-    showToast('❌ Erreur de sauvegarde'); console.error(e);
-    return p;
-  }
-}
-
-async function deleteRecord(id) {
-  try {
-    await fetch(`${AT_URL}/${id}`, { method:'DELETE', headers: AT_HEADS });
-  } catch(e) { showToast('❌ Erreur de suppression'); }
-}
-
-function showLoadingOverlay(show) {
-  let el = document.getElementById('loading-overlay');
-  if(!el) {
-    el = document.createElement('div');
-    el.id = 'loading-overlay';
-    el.style.cssText = 'position:fixed;inset:0;background:rgba(255,255,255,.85);display:flex;align-items:center;justify-content:center;z-index:9999;font-size:1rem;font-weight:600;color:#5F56F0;gap:10px;';
-    el.innerHTML = '<div style="width:20px;height:20px;border:3px solid #C7C4FC;border-top-color:#5F56F0;border-radius:50%;animation:spin .7s linear infinite"></div> Chargement…';
-    document.body.appendChild(el);
-    const style = document.createElement('style');
-    style.textContent = '@keyframes spin{to{transform:rotate(360deg)}}';
-    document.head.appendChild(style);
-  }
-  el.style.display = show ? 'flex' : 'none';
+function save() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(prospects));
+  showToast('💾 Sauvegardé');
 }
 
 // ── VIEWS ─────────────────────────────────────────────────────────────────────
@@ -644,32 +560,34 @@ function renderTabHistorique(p) {
     <div class="timeline">${items}</div>`;
 }
 
-async function addInteraction() {
+function addInteraction() {
   const type = document.getElementById('it-type').value;
   const date = document.getElementById('it-date').value;
   const note = document.getElementById('it-note').value.trim();
   if(!date) return;
   const interaction = { id: Date.now().toString(), type, date, note };
-  const p = prospects.find(x=>x.id===currentId);
-  const updated = { ...p, interactions: [...(p.interactions||[]), interaction] };
-  showToast('💾 Sauvegarde…');
-  const saved = await save(updated);
-  prospects = prospects.map(x=>x.id===currentId?saved:x);
+  prospects = prospects.map(p => {
+    if(p.id !== currentId) return p;
+    return { ...p, interactions: [...(p.interactions||[]), interaction] };
+  });
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(prospects));
   showToast('✅ Interaction ajoutée');
-  renderTabHistorique(saved);
-  if((type==='appel'||type==='rdv'||type==='email_envoye') && saved.statut==='À contacter') {
-    await updateStatut('Contacté');
+  const p = prospects.find(x=>x.id===currentId);
+  renderTabHistorique(p);
+  if((type==='appel'||type==='rdv'||type==='email_envoye') && p.statut==='À contacter') {
+    updateStatut('Contacté');
   }
 }
 
-async function deleteInteraction(iid) {
-  const p = prospects.find(x=>x.id===currentId);
-  const updated = { ...p, interactions: (p.interactions||[]).filter(i=>i.id!==iid) };
-  showToast('💾 Sauvegarde…');
-  const saved = await save(updated);
-  prospects = prospects.map(x=>x.id===currentId?saved:x);
+function deleteInteraction(iid) {
+  prospects = prospects.map(p => {
+    if(p.id !== currentId) return p;
+    return { ...p, interactions: (p.interactions||[]).filter(i=>i.id!==iid) };
+  });
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(prospects));
   showToast('🗑️ Interaction supprimée');
-  renderTabHistorique(saved);
+  const p = prospects.find(x=>x.id===currentId);
+  renderTabHistorique(p);
 }
 
 function renderStatusBtns(p) {
@@ -689,14 +607,9 @@ function switchTab(t, btn) {
   ['infos','coords','email','historique'].forEach(id=>document.getElementById('tab-'+id).style.display=id===t?'block':'none');
 }
 
-async function updateStatut(s) {
-  const p = prospects.find(x=>x.id===currentId);
-  const updated = {...p, statut:s};
-  showToast('💾 Sauvegarde…');
-  const saved = await save(updated);
-  prospects = prospects.map(x=>x.id===currentId?saved:x);
-  showToast('✅ Statut mis à jour');
-  openDetail(currentId);
+function updateStatut(s) {
+  prospects = prospects.map(p=>p.id===currentId?{...p,statut:s}:p);
+  save(); openDetail(currentId);
 }
 
 function showDeleteConfirm() {
@@ -707,12 +620,11 @@ function cancelDelete() {
   document.getElementById('delete-confirm').style.display = 'none';
   document.getElementById('btn-delete-trigger').style.display = 'block';
 }
-async function confirmDelete() {
-  showToast('🗑️ Suppression…');
-  await deleteRecord(currentId);
+function confirmDelete() {
   prospects = prospects.filter(p => p.id !== currentId);
   currentId = null;
-  showToast('✅ Prospect supprimé');
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(prospects));
+  showToast('🗑️ Prospect supprimé');
   showView('list');
 }
 function deleteProspect() { showDeleteConfirm(); }
@@ -744,24 +656,17 @@ function openEdit() {
   showView('add');
 }
 
-async function saveProspect() {
+function saveProspect() {
   const d = v => document.getElementById('f-'+v).value.trim();
   if(!d('dirigeant')||!d('entreprise')) { alert('Merci de renseigner le nom du dirigeant et l\'entreprise.'); return; }
   const rec = { dirigeant:d('dirigeant'), entreprise:d('entreprise'), ca:d('ca'), email:d('email'), telephone:d('telephone'), adresse:d('adresse'), urlArticle:d('urlArticle'), notes:d('notes'), source:d('source'), dateDetection:d('dateDetection'), dateRelance:d('dateRelance'), secteur:d('secteur'), signal:d('signal'), statut:d('statut') };
-  showToast('💾 Sauvegarde en cours…');
   if(editMode && currentId) {
-    const existing = prospects.find(p=>p.id===currentId);
-    const updated = {...existing, ...rec};
-    const saved = await save(updated);
-    prospects = prospects.map(p=>p.id===currentId?saved:p);
-    showToast('✅ Prospect mis à jour');
-    openDetail(currentId);
+    prospects = prospects.map(p=>p.id===currentId?{...rec,id:currentId}:p);
   } else {
-    const saved = await save(rec);
-    prospects = [saved, ...prospects];
-    showToast('✅ Prospect ajouté');
-    showView('list');
+    prospects = [{...rec,id:Date.now()},...prospects];
   }
+  save();
+  if(editMode) { openDetail(currentId); } else { showView('list'); }
 }
 
 function cancelForm() { if(editMode) openDetail(currentId); else showView('list'); }
@@ -867,27 +772,21 @@ Si aucun dirigeant intéressant n'est identifié, réponds avec un tableau vide 
   btn.textContent='✨ Analyser avec Claude'; btn.disabled=false;
 }
 
-async function importAllAnalysis() {
+function importAllAnalysis() {
   const results = window._lastAnalysis;
   if(!results||!results.length) return;
   const today = new Date().toISOString().split('T')[0];
-  showToast(`⏳ Import de ${results.length} prospect(s)…`);
-  showLoadingOverlay(true);
-  const newProspects = [];
-  for(const r of results) {
-    const rec = {
-      dirigeant: r.dirigeant||'', entreprise: r.entreprise||'',
-      secteur: r.secteur||'Autre', ca: r.ca||'',
-      signal: r.signal||'Autre', notes: r.notes||'',
-      dateRelance: r.dateRelance||'', dateDetection: today,
-      source: 'Les Echos', statut: 'À contacter',
-      email: '', telephone: '', adresse: '', urlArticle: ''
-    };
-    const saved = await save(rec);
-    newProspects.push(saved);
-  }
+  const newProspects = results.map(r => ({
+    id: Date.now() + Math.random(),
+    dirigeant: r.dirigeant||'', entreprise: r.entreprise||'',
+    secteur: r.secteur||'Autre', ca: r.ca||'',
+    signal: r.signal||'Autre', notes: r.notes||'',
+    dateRelance: r.dateRelance||'', dateDetection: today,
+    source: 'Les Echos', statut: 'À contacter',
+    email: '', telephone: '', adresse: '', urlArticle: ''
+  }));
   prospects = [...newProspects, ...prospects];
-  showLoadingOverlay(false);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(prospects));
   showToast(`✅ ${newProspects.length} prospect${newProspects.length>1?'s':''} ajouté${newProspects.length>1?'s':''} !`);
   document.getElementById('article-text').value = '';
   window._lastAnalysis = [];
@@ -1024,7 +923,8 @@ function showToast(msg) {
 // ── INIT ──────────────────────────────────────────────────────────────────────
 updateApiKeyBadge();
 if(!getApiKey()) setTimeout(openApiKeyModal, 1500);
-load().then(() => showView('list'));
+load();
+showView('list');
 </script>
 </body>
 </html>
