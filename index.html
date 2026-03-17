@@ -205,6 +205,13 @@
   .tl-add-form select, .tl-add-form input, .tl-add-form textarea { margin-bottom: 10px; }
   .type-colors { appel:'#DBEAFE,#1E40AF', email_sent:'#D1FAE5,#065F46', rdv:'#EDE9FE,#5B21B6', relance:'#FEF3C7,#92400E', note:'#F3F4F6,#374151' }
 
+  /* API KEY MODAL */
+  .modal-overlay { position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10000;display:flex;align-items:center;justify-content:center; }
+  .modal-box { background:white;border-radius:16px;padding:36px;max-width:480px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.2); }
+  .modal-title { font-family:'DM Serif Display',serif;font-size:1.5rem;color:#111827;margin-bottom:8px; }
+  .modal-sub { color:#6B7280;font-size:.93rem;line-height:1.6;margin-bottom:24px; }
+  .modal-input { width:100%;font-size:.88rem;padding:11px 14px;border:1px solid #E5E7EB;border-radius:8px;font-family:monospace;margin-bottom:8px; }
+  .modal-hint { font-size:.78rem;color:#9CA3AF;margin-bottom:20px; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
@@ -219,11 +226,12 @@
         <div class="brand-name">Patrimoine Prospects</div>
         <div class="brand-sub">Suivi des dirigeants à fort potentiel</div>
       </div>
-      <span class="save-badge" id="save-badge">💾 Sauvegarde auto activée</span>
+  <span class="save-badge" id="save-badge">☁️ Synchronisé avec Airtable</span>
     </div>
     <div class="nav-tabs">
       <button class="nav-tab active" onclick="showView('list')" id="tab-list">📋 Prospects (<span id="nav-count">0</span>)</button>
       <button class="nav-tab" onclick="showView('analyze')" id="tab-analyze">🔍 Analyser un article</button>
+      <button class="nav-tab" id="btn-apikey" onclick="openApiKeyModal()" style="font-size:.8rem">🔑 Clé API</button>
     </div>
   </div>
 </nav>
@@ -342,17 +350,57 @@
   </div>
 </main>
 
+<!-- API KEY MODAL -->
+<div id="apikey-modal" class="modal-overlay" style="display:none">
+  <div class="modal-box">
+    <div class="modal-title">🔑 Clé API Anthropic</div>
+    <div class="modal-sub">Pour utiliser l'analyse d'articles et la génération d'emails, entrez votre clé API Anthropic. Elle est stockée uniquement dans votre navigateur.</div>
+    <input class="modal-input" type="password" id="apikey-input" placeholder="sk-ant-api03-…"/>
+    <div class="modal-hint">Obtenez votre clé sur <a href="https://console.anthropic.com" target="_blank" style="color:#5F56F0">console.anthropic.com</a> → API Keys</div>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-primary" style="flex:1" onclick="saveApiKey()">Enregistrer</button>
+      <button class="btn btn-ghost" onclick="closeApiKeyModal()">Plus tard</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
 // ── DATA ──────────────────────────────────────────────────────────────────────
-const STORAGE_KEY = 'cgp_prospects_v1';
+// ── AIRTABLE CONFIG ───────────────────────────────────────────────────────────
+const AT_TOKEN = 'patJL0DthtlowVDuo.0bfedd8a79e1dddf7fc14a92a5bae2f6d4b77b78a4527927288af7af10356ef5';
+const AT_BASE  = 'appL3cF8fR47H9SBM';
+const AT_TABLE = 'tbl5cO82cAKQJRIXr';
+const AT_URL   = `https://api.airtable.com/v0/${AT_BASE}/${AT_TABLE}`;
+const AT_HEADS = { 'Authorization': `Bearer ${AT_TOKEN}`, 'Content-Type': 'application/json' };
+
 function fmtDate(d) { if(!d) return ''; const [y,m,j]=d.split('-'); return `${j}/${m}/${y}`; }
-const DEMO = [
-  { id:1, dirigeant:"Pierre Duchamp", entreprise:"Duchamp Mécanique", secteur:"Industrie", ca:"12M€", signal:"Succession familiale", source:"Les Echos", dateDetection:"2026-01-14", dateRelance:"2026-06-01", statut:"À contacter", notes:"Fondateur 68 ans, pas de repreneur identifié dans la famille. Entreprise rentable sur un marché de niche.", email:"", telephone:"", adresse:"" },
-  { id:2, dirigeant:"Sophie Marchand", entreprise:"HealthTech Solutions", secteur:"Santé", ca:"8M€", signal:"Levée de fonds", source:"Les Echos", dateDetection:"2026-02-03", dateRelance:"2026-09-01", statut:"Contacté", notes:"Série A de 5M€. Croissance rapide. Cession probable dans 3-5 ans.", email:"s.marchand@healthtech.fr", telephone:"06 12 34 56 78", adresse:"12 rue de la Paix, 75001 Paris" },
-  { id:3, dirigeant:"Marc Fontaine", entreprise:"Fontaine Distribution", secteur:"Distribution", ca:"35M€", signal:"Rachat concurrent", source:"Les Echos", dateDetection:"2026-03-01", dateRelance:"2026-05-15", statut:"En discussion", notes:"Concurrent racheté par un fonds. Marc pourrait chercher à sortir dans 18 mois.", email:"", telephone:"", adresse:"" },
-];
+
+// Convertit un record Airtable → objet prospect local
+function atToProspect(rec) {
+  const f = rec.fields;
+  return {
+    id: rec.id,
+    dirigeant: f.dirigeant||'', entreprise: f.entreprise||'', secteur: f.secteur||'',
+    ca: f.ca||'', signal: f.signal||'', source: f.source||'',
+    dateDetection: f.dateDetection||'', dateRelance: f.dateRelance||'',
+    statut: f.statut||'À contacter', notes: f.notes||'',
+    email: f.email||'', telephone: f.telephone||'', adresse: f.adresse||'',
+    urlArticle: f.urlArticle||'',
+    interactions: f.interactions ? JSON.parse(f.interactions) : []
+  };
+}
+
+// Convertit un objet prospect local → champs Airtable
+function prospectToAt(p) {
+  const fields = {};
+  ['dirigeant','entreprise','secteur','ca','signal','source','dateDetection','dateRelance','statut','notes','email','telephone','adresse','urlArticle'].forEach(k => {
+    if(p[k] !== undefined && p[k] !== '') fields[k] = p[k];
+  });
+  if(p.interactions && p.interactions.length) fields.interactions = JSON.stringify(p.interactions);
+  return fields;
+}
 
 let prospects = [];
 let currentId = null;
@@ -360,15 +408,68 @@ let editMode = false;
 let currentTab = 'infos';
 let generatedEmail = null;
 
-function load() {
+async function load() {
+  showLoadingOverlay(true);
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    prospects = saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(DEMO));
-  } catch { prospects = JSON.parse(JSON.stringify(DEMO)); }
+    let allRecords = [], offset = null;
+    do {
+      const url = AT_URL + '?pageSize=100' + (offset ? `&offset=${offset}` : '');
+      const res = await fetch(url, { headers: AT_HEADS });
+      const data = await res.json();
+      if(data.error) throw new Error(data.error.message);
+      allRecords = allRecords.concat(data.records||[]);
+      offset = data.offset;
+    } while(offset);
+    prospects = allRecords.map(atToProspect);
+  } catch(e) {
+    showToast('❌ Erreur de connexion Airtable');
+    console.error(e);
+    prospects = [];
+  }
+  showLoadingOverlay(false);
+  renderStats(); renderAlerts(); renderTable();
 }
-function save() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(prospects));
-  showToast('💾 Sauvegardé automatiquement');
+
+async function save(p) {
+  // p = prospect à sauvegarder (avec son id Airtable)
+  try {
+    const isNew = !p.id || typeof p.id === 'number';
+    if(isNew) {
+      const res = await fetch(AT_URL, { method:'POST', headers: AT_HEADS, body: JSON.stringify({ fields: prospectToAt(p) }) });
+      const data = await res.json();
+      if(data.error) throw new Error(data.error.message);
+      return atToProspect(data);
+    } else {
+      const res = await fetch(`${AT_URL}/${p.id}`, { method:'PATCH', headers: AT_HEADS, body: JSON.stringify({ fields: prospectToAt(p) }) });
+      const data = await res.json();
+      if(data.error) throw new Error(data.error.message);
+      return atToProspect(data);
+    }
+  } catch(e) {
+    showToast('❌ Erreur de sauvegarde'); console.error(e);
+    return p;
+  }
+}
+
+async function deleteRecord(id) {
+  try {
+    await fetch(`${AT_URL}/${id}`, { method:'DELETE', headers: AT_HEADS });
+  } catch(e) { showToast('❌ Erreur de suppression'); }
+}
+
+function showLoadingOverlay(show) {
+  let el = document.getElementById('loading-overlay');
+  if(!el) {
+    el = document.createElement('div');
+    el.id = 'loading-overlay';
+    el.style.cssText = 'position:fixed;inset:0;background:rgba(255,255,255,.85);display:flex;align-items:center;justify-content:center;z-index:9999;font-size:1rem;font-weight:600;color:#5F56F0;gap:10px;';
+    el.innerHTML = '<div style="width:20px;height:20px;border:3px solid #C7C4FC;border-top-color:#5F56F0;border-radius:50%;animation:spin .7s linear infinite"></div> Chargement…';
+    document.body.appendChild(el);
+    const style = document.createElement('style');
+    style.textContent = '@keyframes spin{to{transform:rotate(360deg)}}';
+    document.head.appendChild(style);
+  }
+  el.style.display = show ? 'flex' : 'none';
 }
 
 // ── VIEWS ─────────────────────────────────────────────────────────────────────
@@ -543,35 +644,32 @@ function renderTabHistorique(p) {
     <div class="timeline">${items}</div>`;
 }
 
-function addInteraction() {
+async function addInteraction() {
   const type = document.getElementById('it-type').value;
   const date = document.getElementById('it-date').value;
   const note = document.getElementById('it-note').value.trim();
   if(!date) return;
   const interaction = { id: Date.now().toString(), type, date, note };
-  prospects = prospects.map(p => {
-    if(p.id !== currentId) return p;
-    return { ...p, interactions: [...(p.interactions||[]), interaction] };
-  });
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(prospects));
-  showToast('✅ Interaction ajoutée');
   const p = prospects.find(x=>x.id===currentId);
-  renderTabHistorique(p);
-  // Auto-update statut if appel or rdv
-  if((type==='appel'||type==='rdv'||type==='email_envoye') && p.statut==='À contacter') {
-    updateStatut('Contacté');
+  const updated = { ...p, interactions: [...(p.interactions||[]), interaction] };
+  showToast('💾 Sauvegarde…');
+  const saved = await save(updated);
+  prospects = prospects.map(x=>x.id===currentId?saved:x);
+  showToast('✅ Interaction ajoutée');
+  renderTabHistorique(saved);
+  if((type==='appel'||type==='rdv'||type==='email_envoye') && saved.statut==='À contacter') {
+    await updateStatut('Contacté');
   }
 }
 
-function deleteInteraction(iid) {
-  prospects = prospects.map(p => {
-    if(p.id !== currentId) return p;
-    return { ...p, interactions: (p.interactions||[]).filter(i=>i.id!==iid) };
-  });
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(prospects));
-  showToast('🗑️ Interaction supprimée');
+async function deleteInteraction(iid) {
   const p = prospects.find(x=>x.id===currentId);
-  renderTabHistorique(p);
+  const updated = { ...p, interactions: (p.interactions||[]).filter(i=>i.id!==iid) };
+  showToast('💾 Sauvegarde…');
+  const saved = await save(updated);
+  prospects = prospects.map(x=>x.id===currentId?saved:x);
+  showToast('🗑️ Interaction supprimée');
+  renderTabHistorique(saved);
 }
 
 function renderStatusBtns(p) {
@@ -591,9 +689,14 @@ function switchTab(t, btn) {
   ['infos','coords','email','historique'].forEach(id=>document.getElementById('tab-'+id).style.display=id===t?'block':'none');
 }
 
-function updateStatut(s) {
-  prospects = prospects.map(p=>p.id===currentId?{...p,statut:s}:p);
-  save(); openDetail(currentId);
+async function updateStatut(s) {
+  const p = prospects.find(x=>x.id===currentId);
+  const updated = {...p, statut:s};
+  showToast('💾 Sauvegarde…');
+  const saved = await save(updated);
+  prospects = prospects.map(x=>x.id===currentId?saved:x);
+  showToast('✅ Statut mis à jour');
+  openDetail(currentId);
 }
 
 function showDeleteConfirm() {
@@ -604,11 +707,12 @@ function cancelDelete() {
   document.getElementById('delete-confirm').style.display = 'none';
   document.getElementById('btn-delete-trigger').style.display = 'block';
 }
-function confirmDelete() {
+async function confirmDelete() {
+  showToast('🗑️ Suppression…');
+  await deleteRecord(currentId);
   prospects = prospects.filter(p => p.id !== currentId);
   currentId = null;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(prospects));
-  showToast('🗑️ Prospect supprimé');
+  showToast('✅ Prospect supprimé');
   showView('list');
 }
 function deleteProspect() { showDeleteConfirm(); }
@@ -640,17 +744,24 @@ function openEdit() {
   showView('add');
 }
 
-function saveProspect() {
+async function saveProspect() {
   const d = v => document.getElementById('f-'+v).value.trim();
   if(!d('dirigeant')||!d('entreprise')) { alert('Merci de renseigner le nom du dirigeant et l\'entreprise.'); return; }
   const rec = { dirigeant:d('dirigeant'), entreprise:d('entreprise'), ca:d('ca'), email:d('email'), telephone:d('telephone'), adresse:d('adresse'), urlArticle:d('urlArticle'), notes:d('notes'), source:d('source'), dateDetection:d('dateDetection'), dateRelance:d('dateRelance'), secteur:d('secteur'), signal:d('signal'), statut:d('statut') };
+  showToast('💾 Sauvegarde en cours…');
   if(editMode && currentId) {
-    prospects = prospects.map(p=>p.id===currentId?{...rec,id:currentId}:p);
+    const existing = prospects.find(p=>p.id===currentId);
+    const updated = {...existing, ...rec};
+    const saved = await save(updated);
+    prospects = prospects.map(p=>p.id===currentId?saved:p);
+    showToast('✅ Prospect mis à jour');
+    openDetail(currentId);
   } else {
-    prospects = [{...rec,id:Date.now()},...prospects];
+    const saved = await save(rec);
+    prospects = [saved, ...prospects];
+    showToast('✅ Prospect ajouté');
+    showView('list');
   }
-  save();
-  if(editMode) { openDetail(currentId); } else { showView('list'); }
 }
 
 function cancelForm() { if(editMode) openDetail(currentId); else showView('list'); }
@@ -664,7 +775,9 @@ async function generateEmail() {
   loading.className='loading-msg'; loading.id='email-loading'; loading.textContent='✨ Rédaction en cours…';
   document.getElementById('tab-email').appendChild(loading);
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    const key = getApiKey();
+    if(!key) { openApiKeyModal(); document.getElementById('email-loading')?.remove(); return; }
+    const res = await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:anthropicHeaders(),body:JSON.stringify({
       model:'claude-sonnet-4-20250514',max_tokens:800,
       system:`Tu es expert en gestion de patrimoine. Rédige un email de prise de contact professionnel et chaleureux pour un CGP approchant un dirigeant. L'email doit : faire moins de 200 mots, faire référence naturellement au contexte de l'entreprise, ne pas mentionner explicitement "cession" ou "vente", se positionner sur la transmission patrimoniale et l'optimisation fiscale. Terminer par "Bien cordialement,\n[Votre prénom]". Réponds UNIQUEMENT avec le texte de l'email.`,
       messages:[{role:'user',content:`Dirigeant : ${p.dirigeant}\nEntreprise : ${p.entreprise}\nSecteur : ${p.secteur}\nCA : ${p.ca}\nSignal : ${p.signal}\nNotes : ${p.notes}`}]
@@ -693,7 +806,9 @@ async function analyzeArticle() {
   btn.textContent='⏳ Analyse en cours…'; btn.disabled=true;
   document.getElementById('analyze-result').innerHTML='<div class="loading-msg">Lecture et analyse de l\'article…</div>';
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    const key = getApiKey();
+    if(!key) { openApiKeyModal(); btn.textContent='✨ Analyser avec Claude'; btn.disabled=false; document.getElementById('analyze-result').innerHTML=''; return; }
+    const res = await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:anthropicHeaders(),body:JSON.stringify({
       model:'claude-sonnet-4-20250514',max_tokens:2000,
       system:`Tu es assistant pour un Conseiller en Gestion de Patrimoine (CGP) français. Analyse l'article et identifie TOUS les dirigeants d'entreprise mentionnés qui pourraient être intéressants patrimonialement. Réponds UNIQUEMENT avec un tableau JSON valide, même s'il n'y a qu'un seul dirigeant :
 [{"dirigeant":"Prénom Nom","entreprise":"Nom","secteur":"Industrie|Tech|Immobilier|Santé|Distribution|Services|Agroalimentaire|BTP|Finance|Autre","ca":"valeur ou vide","signal":"Croissance forte|Succession familiale|Levée de fonds|Ouverture de capital|Cession partielle|Rachat concurrent|Direction renouvelée|Internationalisation|Autre","interet":3,"notes":"2-3 phrases sur l'intérêt patrimonial et délai estimé","dateRelance":"YYYY-MM-DD dans 6 à 18 mois"}]
@@ -752,26 +867,27 @@ Si aucun dirigeant intéressant n'est identifié, réponds avec un tableau vide 
   btn.textContent='✨ Analyser avec Claude'; btn.disabled=false;
 }
 
-function importAllAnalysis() {
+async function importAllAnalysis() {
   const results = window._lastAnalysis;
   if(!results||!results.length) return;
   const today = new Date().toISOString().split('T')[0];
-  const newProspects = results.map(r => ({
-    id: Date.now() + Math.random(),
-    dirigeant: r.dirigeant||'',
-    entreprise: r.entreprise||'',
-    secteur: r.secteur||'Autre',
-    ca: r.ca||'',
-    signal: r.signal||'Autre',
-    notes: r.notes||'',
-    dateRelance: r.dateRelance||'',
-    dateDetection: today,
-    source: 'Les Echos',
-    statut: 'À contacter',
-    email: '', telephone: '', adresse: '', urlArticle: ''
-  }));
+  showToast(`⏳ Import de ${results.length} prospect(s)…`);
+  showLoadingOverlay(true);
+  const newProspects = [];
+  for(const r of results) {
+    const rec = {
+      dirigeant: r.dirigeant||'', entreprise: r.entreprise||'',
+      secteur: r.secteur||'Autre', ca: r.ca||'',
+      signal: r.signal||'Autre', notes: r.notes||'',
+      dateRelance: r.dateRelance||'', dateDetection: today,
+      source: 'Les Echos', statut: 'À contacter',
+      email: '', telephone: '', adresse: '', urlArticle: ''
+    };
+    const saved = await save(rec);
+    newProspects.push(saved);
+  }
   prospects = [...newProspects, ...prospects];
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(prospects));
+  showLoadingOverlay(false);
   showToast(`✅ ${newProspects.length} prospect${newProspects.length>1?'s':''} ajouté${newProspects.length>1?'s':''} !`);
   document.getElementById('article-text').value = '';
   window._lastAnalysis = [];
@@ -874,7 +990,31 @@ function exportXLSX() {
 
 function exportCSV() { exportXLSX(); }
 
-// ── TOAST ─────────────────────────────────────────────────────────────────────
+// ── API KEY ───────────────────────────────────────────────────────────────────
+const APIKEY_STORAGE = 'cgp_anthropic_key';
+function getApiKey() { return localStorage.getItem(APIKEY_STORAGE)||''; }
+function saveApiKey() {
+  const key = document.getElementById('apikey-input').value.trim();
+  if(!key) return;
+  localStorage.setItem(APIKEY_STORAGE, key);
+  document.getElementById('apikey-modal').style.display='none';
+  showToast('✅ Clé API enregistrée');
+  updateApiKeyBadge();
+}
+function closeApiKeyModal() { document.getElementById('apikey-modal').style.display='none'; }
+function openApiKeyModal() {
+  document.getElementById('apikey-input').value = getApiKey();
+  document.getElementById('apikey-modal').style.display='flex';
+}
+function updateApiKeyBadge() {
+  const btn = document.getElementById('btn-apikey');
+  if(btn) btn.style.background = getApiKey() ? '#D1FAE5' : '#FEF3C7';
+}
+function anthropicHeaders() {
+  return { 'Content-Type':'application/json', 'x-api-key': getApiKey(), 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' };
+}
+
+
 let toastTimer;
 function showToast(msg) {
   const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
@@ -882,8 +1022,9 @@ function showToast(msg) {
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
-load();
-showView('list');
+updateApiKeyBadge();
+if(!getApiKey()) setTimeout(openApiKeyModal, 1500);
+load().then(() => showView('list'));
 </script>
 </body>
 </html>
