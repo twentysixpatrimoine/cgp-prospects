@@ -156,9 +156,9 @@
     </div>
     <div class="tw">
       <table>
-        <thead><tr><th>Date</th><th>Raison sociale</th><th>SIREN</th><th>Ville</th><th>Dept</th><th>Type acte</th><th>Montant (€)</th><th>Extrait</th></tr></thead>
+        <thead><tr><th>Date</th><th>Raison sociale</th><th>SIREN</th><th>Ville</th><th>Dept</th><th>Type acte</th><th>Montant (€)</th><th>Extrait</th><th>Annonce BODACC</th></tr></thead>
         <tbody id="tbody">
-          <tr><td colspan="8"><div class="empty"><div class="ico">📋</div><p>Définissez une période et lancez la recherche</p></div></td></tr>
+          <tr><td colspan="9"><div class="empty"><div class="ico">📋</div><p>Définissez une période et lancez la recherche</p></div></td></tr>
         </tbody>
       </table>
     </div>
@@ -270,7 +270,7 @@ async function lancerRecherche() {
   ['sTotal','sFiltres','sMontant'].forEach(id => document.getElementById(id).textContent='…');
   document.getElementById('sDate').textContent = new Date().toLocaleTimeString('fr-FR');
   document.getElementById('countBadge').textContent = '…';
-  document.getElementById('tbody').innerHTML = '<tr><td colspan="8"><div class="empty"><div class="ico">⏳</div><p>Interrogation API BODACC…</p></div></td></tr>';
+  document.getElementById('tbody').innerHTML = '<tr><td colspan="9"><div class="empty"><div class="ico">⏳</div><p>Interrogation API BODACC…</p></div></td></tr>';
 
   log('Période : ' + dateDebut + ' → ' + dateFin + '  |  Seuil : ' + seuil.toLocaleString('fr-FR') + ' €', 'i');
   setP(10, 'Connexion à l\'API BODACC…');
@@ -288,7 +288,7 @@ async function lancerRecherche() {
       document.getElementById('sFiltres').textContent = '0';
       document.getElementById('sMontant').textContent = '0 €';
       document.getElementById('countBadge').textContent = '0 résultat';
-      document.getElementById('tbody').innerHTML = '<tr><td colspan="8"><div class="empty"><div class="ico">🔎</div><p>Aucune annonce Vente &amp; Cession sur cette période.</p></div></td></tr>';
+      document.getElementById('tbody').innerHTML = '<tr><td colspan="9"><div class="empty"><div class="ico">🔎</div><p>Aucune annonce Vente &amp; Cession sur cette période.</p></div></td></tr>';
       hideP();
       setStatus('ok', '✅ Recherche terminée — 0 annonce sur cette période');
       return;
@@ -327,6 +327,16 @@ async function lancerRecherche() {
       const sm = registre.match(/\b(\d{9})\b/);
       const siren = sm ? sm[1] : (f.numerosiren || 'N/A');
 
+      // Construire lien BODACC : https://www.bodacc.fr/annonce/detail-annonce/A/AAAANNNN/XXXX
+      // f.publicationavis = "BODACC A n° 20260056" → on extrait l'année+numéro
+      // f.numeroannonce = numéro de l'annonce dans le bulletin
+      const pubRaw = f.publicationavis || f.parution || '';
+      const pubMatch = pubRaw.match(/(\d{8})/); // ex: 20260056
+      const numAnnonce = f.numeroannonce || f.numero_annonce || rec.recordid || '';
+      const lienBodacc = pubMatch && numAnnonce
+        ? 'https://www.bodacc.fr/annonce/detail-annonce/A/' + pubMatch[1] + '/' + numAnnonce
+        : '';
+
       filtered.push({
         date:          f.dateparution || '',
         raisonSociale: f.commercant || f.denomination || f.nom || '—',
@@ -336,6 +346,7 @@ async function lancerRecherche() {
         typeActe:      f.typeannonce || f.familleavis_lib || 'Vente & Cession',
         montant:       montantMax,
         description:   texte.replace(/\s+/g,' ').substring(0, 350).trim(),
+        lienBodacc,
       });
     }
 
@@ -361,7 +372,7 @@ async function lancerRecherche() {
     log('Erreur : ' + e.message, 'e');
     hideP();
     setStatus('err', '⚠️ ' + e.message);
-    document.getElementById('tbody').innerHTML = '<tr><td colspan="8"><div class="empty"><div class="ico">⚠️</div><p>' + escH(e.message) + '</p></div></td></tr>';
+    document.getElementById('tbody').innerHTML = '<tr><td colspan="9"><div class="empty"><div class="ico">⚠️</div><p>' + escH(e.message) + '</p></div></td></tr>';
     ['sTotal','sFiltres','sMontant'].forEach(id => document.getElementById(id).textContent='—');
   } finally {
     btn.disabled = false;
@@ -373,7 +384,7 @@ async function lancerRecherche() {
 function renderTable(data, seuil) {
   const tbody = document.getElementById('tbody');
   if (!data.length) {
-    tbody.innerHTML = '<tr><td colspan="8"><div class="empty"><div class="ico">🔎</div><p>Aucune annonce ne mentionne un montant ≥ ' + (seuil||100000).toLocaleString('fr-FR') + ' €.<br><small style="opacity:.7">Certaines annonces BODACC ne précisent pas de montant chiffré.</small></p></div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9"><div class="empty"><div class="ico">🔎</div><p>Aucune annonce ne mentionne un montant ≥ ' + (seuil||100000).toLocaleString('fr-FR') + ' €.<br><small style="opacity:.7">Certaines annonces BODACC ne précisent pas de montant chiffré.</small></p></div></td></tr>';
     return;
   }
   const sorted = [...data].sort((a,b) => b.montant - a.montant);
@@ -392,6 +403,7 @@ function renderTable(data, seuil) {
       +'<td><span class="ba">'+escH(r.typeActe)+'</span></td>'
       +'<td class="tm'+(isBig?' big':'')+'">'+mFmt+'</td>'
       +'<td style="max-width:260px;font-size:11px;color:var(--muted);line-height:1.4">'+escH(r.description.substring(0,230))+(r.description.length>230?'…':'')+'</td>'
+      +(r.lienBodacc ? '<td style="white-space:nowrap"><a class="sl2" href="'+r.lienBodacc+'" target="_blank">Voir ↗</a></td>' : '<td style="color:var(--muted);font-size:11px">—</td>')
       +'</tr>';
   }).join('');
 }
@@ -419,12 +431,13 @@ function exporterExcel() {
     'Montant détecté (€)': r.montant,
     'Description':         r.description,
     'Lien Pappers': /^\d{9}$/.test(r.siren) ? 'https://www.pappers.fr/entreprise/'+r.siren : '',
+    'Lien BODACC':  r.lienBodacc || '',
   }));
 
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.json_to_sheet(lignes);
-  ws['!cols'] = [{wch:13},{wch:36},{wch:12},{wch:20},{wch:11},{wch:20},{wch:20},{wch:80},{wch:44}];
-  for (let C=0;C<=8;C++){
+  ws['!cols'] = [{wch:13},{wch:36},{wch:12},{wch:20},{wch:11},{wch:20},{wch:20},{wch:80},{wch:44},{wch:60}];
+  for (let C=0;C<=9;C++){
     const ref = XLSX.utils.encode_cell({r:0,c:C});
     if (ws[ref]) ws[ref].s = {fill:{fgColor:{rgb:'009688'}},font:{bold:true,color:{rgb:'FFFFFF'}},alignment:{horizontal:'center'}};
   }
